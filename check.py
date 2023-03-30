@@ -70,39 +70,39 @@ if qt:
         print("Checking GL capabilities        ", end=' ')
         app = QApplication([])
 
-        if not QGLFormat.hasOpenGL():
+        #if not QGLFormat.hasOpenGL():
+        #    print('[FAIL]')
+        #else:
+        print('[OK]')
+        print('GL Version at least 3.3         ', end=' ')
+        try:
+            f = QGLFormat()
+            f.setVersion(3, 3)
+            f.setProfile(QGLFormat.OpenGLContextProfile.CoreProfile)
+            #f.setDoubleBuffer(True)
+            QGLFormat.setDefaultFormat(f)
+
+            class GLTest(QGLWidget):
+                gl_version = 0.0
+                def initializeGL(self):
+                    GLTest.gl_version = float(ogl.glGetString(ogl.GL_VERSION)[:3])
+
+            test = GLTest()
+
+            test.show()
+
+            if GLTest.gl_version >= 3.3:
+                print("[OK]")
+                glhw = True
+            else:
+                print("[FAIL]")
+
+            print("Supported GL version             [%.1f]" % GLTest.gl_version)
+        except:
             print('[FAIL]')
-        else:
-            print('[OK]')
-            print('GL Version at least 3.3         ', end=' ')
-            try:
-                f = QGLFormat()
-                f.setVersion(3, 3)
-                f.setProfile(QGLFormat.OpenGLContextProfile.CoreProfile)
-                f.setDoubleBuffer(True)
-                QGLFormat.setDefaultFormat(f)
+            print('Could not determine GL version')
 
-                class GLTest(QGLWidget):
-                    gl_version = 0.0
-                    def initializeGL(self):
-                        GLTest.gl_version = float(ogl.glGetString(ogl.GL_VERSION)[:3])
-
-                test = GLTest()
-
-                test.show()
-
-                if GLTest.gl_version >= 3.3:
-                    print("[OK]")
-                    glhw = True
-                else:
-                    print("[FAIL]")
-
-                print("Supported GL version             [%.1f]" % GLTest.gl_version)
-            except:
-                print('[FAIL]')
-                print('Could not determine GL version')
-
-            print("Checking for pyopengl-accelerate", end=' ')
+        print("Checking for pyopengl-accelerate", end=' ')            
         try:
             import OpenGL_accelerate
         except ImportError:
