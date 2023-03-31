@@ -20,7 +20,7 @@ venv
 target/
 
 .DS_Store
-settings.cfg
+#settings.cfg
 *.bak
 # Byte-compiled / optimized / DLL files
 __pycache__/
