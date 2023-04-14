@@ -1,6 +1,7 @@
 from stable_baselines3 import PPO, A2C
 from plugins.atc_gym_env import AtcGymEnv
 from plugins.atc_gym_callback import AtcCallback
+from ray.rllib.env.multi_agent_env import make_multi_agent
 import bluesky as bs
 import os
 
@@ -27,14 +28,24 @@ class Agent():
             if self.env.train_mode:
                 raise Exception("Could not load model, so build the model for training...")
             else:
-                self.model = A2C.load("{}/A2C_Model.h10".format(self.models_dir))
+                self.model = PPO.load("{}/PPO_Model.h1".format(self.models_dir))
                 print("Successfully loaded model")
         except:
-            self.model = A2C(
+            self.model = PPO(
                 "MultiInputPolicy", 
-                self.env, 
+                self.env,
                 verbose=0,
                 tensorboard_log=self.logdir,
+                gamma=0.95,
+                n_steps=256,
+                ent_coef=0.0905168,
+                learning_rate=0.00062211,
+                vf_coef=0.042202,
+                max_grad_norm=0.9,
+                gae_lambda=0.99,
+                n_epochs=5,
+                clip_range=0.3,
+                batch_size=256
             )
             self.callback = AtcCallback(env=self.env)
 
@@ -56,7 +67,7 @@ class Agent():
     def train(self):
         print("Train!!!")
         self.env.train_started = True
-        self.model.learn(total_timesteps=1000000, tb_log_name="A2C", callback=self.callback)
+        self.model.learn(total_timesteps=2000000, tb_log_name="PPO", callback=self.callback)
         print("Done")  
-        self.model.save("{}/A2C_Model.h11".format(self.models_dir))
+        self.model.save("{}/PPO_Model.h3".format(self.models_dir))
         bs.sim.quit()
