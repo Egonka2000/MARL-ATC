@@ -65,14 +65,14 @@ class AtcGymEnv(ParallelEnv):
         return self.action_spaces[agent]
 
     def step(self, action_dict):
-        self.done = (len(traf.id) == 0)
+        self.terminations = {agent: self.delete_if_terminated(int(agent)) for agent in self.possible_agents}
+        self.truncations = self.terminations
+        self.done = (len(traf.id) == 0 or any(self.terminations))
         if not self.done:
             for _idx, action in action_dict.items():
                 idx = int(_idx)
                 agent_acid = traf.id[idx]
                 agent_alt = int(traf.alt[idx] / ft)
-                self.terminations[_idx] = self.delete_if_terminated(idx)
-                self.truncations[_idx] = self.terminations[_idx]
                 if action == 0:
                     stack.stack('ALT {}, {}'.format(agent_acid, agent_alt - 200))
                 if action == 2:
