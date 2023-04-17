@@ -1,7 +1,7 @@
 from plugins.atc_gym_stable_baselines import Agent
 
 def init_plugin():
-    train_mode = False
+    train_mode = True
     agent = Agent(train_mode)
 
     config = {
