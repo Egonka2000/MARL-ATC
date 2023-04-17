@@ -65,7 +65,7 @@ class AtcGymEnv(ParallelEnv):
         return self.action_spaces[agent]
 
     def step(self, action_dict):
-        self.terminations = {agent: self.delete_if_terminated(int(agent)) for agent in self.possible_agents}
+        self.delete_if_terminated()
         self.truncations = self.terminations
         self.done = (len(traf.id) == 0 or any(self.terminations.values()))
         if not self.done:
@@ -202,19 +202,21 @@ class AtcGymEnv(ParallelEnv):
         stack.stack('SWAN{} AFTER {} ADDWPT {}'.format(_idx, "PEA", "KMLI"))
         stack.stack('PAN PEA')      
 
-    def delete_if_terminated(self, _idx):
-        terminal, terminal_type = self.check_that_ac_should_terminated(_idx)
-        if(terminal):
-            if terminal_type == 1:
-                    self.collision_counter += 1
-                    print("Total Coll: {}".format(self.collision_counter))
-            else:
-                self.success_counter += 1
-                print("Total Success: {}".format(self.success_counter))
-            for i in range(len(traf.id)):                
-                stack.stack('DEL {}'.format(traf.id[i]))
-                self.active_ac -= 1
-        return terminal
+    def delete_if_terminated(self):
+        for i in range(self.max_ac):
+            terminal, terminal_type = self.check_that_ac_should_terminated(i)
+            if(terminal):
+                if terminal_type == 1:
+                        self.collision_counter += 1
+                        print("Total Coll: {}".format(self.collision_counter))
+                else:
+                    self.success_counter += 1
+                    print("Total Success: {}".format(self.success_counter))
+                for i in range(len(traf.id)):                
+                    stack.stack('DEL {}'.format(traf.id[i]))
+                    self.active_ac -= 1
+                    self.terminations[str(i)] = True
+                break
 
     def check_that_ac_should_terminated(self, _idx):
             # If the ac is terminal
@@ -251,6 +253,7 @@ class AtcGymEnv(ParallelEnv):
         row = dist_matrix[:,_idx]
         close = 10e+25
         alt_separations = 0
+        nearest_ac_idx = _idx
         
         for i, dist in enumerate(row):
             if i != _idx and dist < close:
