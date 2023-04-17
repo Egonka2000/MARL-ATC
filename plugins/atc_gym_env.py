@@ -67,7 +67,7 @@ class AtcGymEnv(ParallelEnv):
     def step(self, action_dict):
         self.terminations = {agent: self.delete_if_terminated(int(agent)) for agent in self.possible_agents}
         self.truncations = self.terminations
-        self.done = (len(traf.id) == 0 or any(self.terminations))
+        self.done = (len(traf.id) == 0 or any(self.terminations.values()))
         if not self.done:
             for _idx, action in action_dict.items():
                 idx = int(_idx)
