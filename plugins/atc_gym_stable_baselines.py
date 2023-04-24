@@ -4,7 +4,7 @@ from plugins.atc_gym_callback import AtcCallback
 import bluesky as bs
 import os
 import supersuit as ss
-from stable_baselines3.common import on_policy_algorithm
+from stable_baselines3.common.vec_env.vec_monitor import VecMonitor
 
 class Agent():
     def __init__(self, train_mode, agents):
@@ -13,6 +13,7 @@ class Agent():
         self.train_started = False
         self.env = ss.pettingzoo_env_to_vec_env_v1(AtcGymEnv(self.train_mode))
         self.env = ss.concat_vec_envs_v1(self.env, 1, base_class='stable_baselines3')
+        self.env = VecMonitor(self.env)
         self.total_reward = 0
         self.done = True
 
@@ -32,7 +33,7 @@ class Agent():
             if self.train_mode:
                 raise Exception("Could not load model, so build the model for training...")
             else:
-                self.model = PPO.load("{}/PPO_Model.h1".format(self.models_dir))
+                self.model = PPO.load("{}/PPO_Model.h1".format(self.models_dir), env=self.env)
                 print("Successfully loaded model")
         except:
             self.model = PPO(
@@ -60,7 +61,10 @@ class Agent():
     def train(self):
         print("Train!!!")
         self.train_started = True
-        self.model.learn(total_timesteps=2000000, tb_log_name="PPO")
-        print("Done")  
-        self.model.save("{}/PPO_Model.h4".format(self.models_dir))
+        TIMESTEPS = 1000000
+        for i in range(1,20):
+            self.model.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False, tb_log_name="PPO_9")
+            self.model.save("{}/PPO_{}".format(self.models_dir, TIMESTEPS*i))
+        print("Done")
+        
         bs.sim.quit()
