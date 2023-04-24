@@ -4,7 +4,7 @@ class AtcCallback(BaseCallback):
 
     def __init__(self, env, verbose=0):
         super(AtcCallback, self).__init__(verbose)
-        self.env = env
+        self.env1 = env
         self.rollout_ends = 0
 
 
@@ -12,5 +12,7 @@ class AtcCallback(BaseCallback):
         return super()._on_step()
         
     def _on_rollout_end(self) -> None:
-        self.rollout_ends += 1
-        self.env.current_agent_idx = self.rollout_ends % self.env.max_ac
+        if(self.env1.all_rewards != 0):
+            print(self.env1.all_rewards)
+        self.reward_mean = self.env1.all_rewards / self.env1.max_ac
+        self.logger.record("episode_reward_mean", self.reward_mean)
