@@ -16,7 +16,7 @@ class AtcGymEnv(ParallelEnv):
         self.train_started = False
         self.positions = self.load_positions()
         self.routeDistances()
-        self.max_ac = 3
+        self.max_ac = 2
         self.times = [20, 25, 30]
         self.spawn_queue = random.choices(self.times, k=self.positions.shape[0])
         self.active_ac = 0
@@ -26,6 +26,7 @@ class AtcGymEnv(ParallelEnv):
         self.success_counter = 0
         self.collision_counter = 0
         self.intruders = 2
+        self.possible_alts = [25000, 28000, 31000]
         self.done = False
         self.possible_agents = ["{}".format(r) for r in range(self.max_ac)]
         self.agent_name_mapping = dict(
@@ -44,7 +45,6 @@ class AtcGymEnv(ParallelEnv):
             agent: Dict({
                 'agent': Box(low, high, dtype=np.float32),
                 'intruder-1': Box(low, high, dtype=np.float32),
-                'intruder-2': Box(low, high, dtype=np.float32)
             }) for agent in self.possible_agents
         })
 
@@ -53,7 +53,6 @@ class AtcGymEnv(ParallelEnv):
             agent: {
                 'agent':  np.array([self.max_d, 28000, 180, 0, 0 ], dtype=np.float32),
                 'intruder-1':  np.array([self.max_d, 28000, 180, 0, self.max_d], dtype=np.float32),
-                'intruder-2':  np.array([self.max_d, 28000, 180, 0, self.max_d], dtype=np.float32)
         } for agent in self.possible_agents
         }
         
@@ -67,7 +66,7 @@ class AtcGymEnv(ParallelEnv):
         return self.action_spaces[agent]
 
     def step(self, action_dict):
-        self.delete_if_terminated()
+        terminal, terminal_type, agent_idx, nearest_idx = self.delete_if_terminated()
         self.truncations = self.terminations
         self.done = (len(traf.id) == 0 or any(self.terminations.values()))
         if not self.done:
@@ -75,49 +74,32 @@ class AtcGymEnv(ParallelEnv):
                 idx = int(_idx)
                 agent_acid = traf.id[idx]
                 agent_alt = int(traf.alt[idx] / ft)
-                if action == 0:
-                    stack.stack('ALT {}, {}'.format(agent_acid, agent_alt - 200))
-                if action == 2:
-                    stack.stack('ALT {}, {}'.format(agent_acid, agent_alt + 200))
-                if action == 1:
-                    stack.stack('ALT {}, {}'.format(agent_acid, agent_alt))
+                stack.stack('ALT {}, {}'.format(agent_acid, self.possible_alts[action]))
                 distance, v_separation, nearest_ac_idx = self.nearest_ac(self.get_distance_matrix_ac(), idx)
                 nearest_ac_alt = int(traf.alt[int(nearest_ac_idx)] / ft)
 
-                if agent_alt < 20000:
-                    if agent_alt < 5000:
-                        self.rewards[_idx] = -20
+                if v_separation >= 2000:
+                    if int(agent_alt) == int(self.agents_prev_alt[_idx]):
+                        self.rewards[_idx] = 10
                     else:
-                        self.rewards[_idx] = (math.log2(agent_alt / 10000) - 1) * 10
-                elif(agent_alt > 33000):
-                    self.rewards[_idx] = 1 - (math.pow(math.e, (agent_alt / 10000)) / 5)
-                elif distance > 12:
-                    if agent_alt == self.agents_prev_alt[_idx]:
-                        #print("Distance > 12 és {} a magasság stagnál".format(agent_acid))
-                        self.rewards[_idx] = 1
-                    else:
-                        self.rewards[_idx] = -1
-                elif distance > 3:
-                    if v_separation <= 5000 and v_separation >= 2000:
-                        if int(agent_alt) == int(self.agents_prev_alt[_idx]):
-                            #print("Distance > 3 és {} a magasság stagnál".format(agent_acid))
-                            self.rewards[_idx] = 30
-                        else:
-                            #print("Distance > 3 és {} a magasság nem stagnál".format(agent_acid))
-                            self.rewards[_idx] = 5
-                    elif agent_alt > nearest_ac_alt and agent_alt > self.agents_prev_alt[_idx] and nearest_ac_alt <= self.agents_prev_alt[nearest_ac_idx] and v_separation < 3500:
-                        print("Distance > 3 és az {} távolodik a hozzá legközelebbi {} felfelé".format(agent_acid, nearest_ac_idx))
-                        self.rewards[_idx] = (math.pow(math.e, (v_separation / 1000)) / math.e)**0.3
-                    elif agent_alt < nearest_ac_alt and agent_alt < self.agents_prev_alt[_idx] and nearest_ac_alt >= self.agents_prev_alt[nearest_ac_idx] and v_separation < 3500:
-                        print("Distance > 3 és az {} távolodik a hozzá legközelebbi {} lefelé".format(agent_acid, nearest_ac_idx))
-                        self.rewards[_idx] = (math.pow(math.e, (v_separation / 1000)) / math.e)**0.3
-                    elif(v_separation > 5000):
-                        self.rewards[_idx] = 1 - (math.pow(math.e, (v_separation / 1000)) / math.e)**0.3
-                    else:
-                        self.rewards[_idx] = -5
+                        self.rewards[_idx] = 5
+                elif agent_alt > nearest_ac_alt and agent_alt >= self.agents_prev_alt[_idx] and nearest_ac_alt <= self.agents_prev_alt[nearest_ac_idx]:
+                    self.rewards[_idx] = 0.9*(v_separation/2000)
+                elif agent_alt < nearest_ac_alt and agent_alt <= self.agents_prev_alt[_idx] and nearest_ac_alt >= self.agents_prev_alt[nearest_ac_idx]:
+                    self.rewards[_idx] = 0.9*(v_separation/2000)
+                else:
+                    self.rewards[_idx] = -1 + 0.9*(v_separation / 2000)
+                    
 
                 self.agents_prev_alt[_idx] = agent_alt
                 self.prev_v_separation[_idx] = v_separation
+
+        if terminal:
+            if terminal_type == 1:
+                self.rewards[agent_idx] = -1000
+                self.rewards[nearest_idx] = -1000
+            if terminal_type == 2:
+                self.rewards = {agent: 1000 for agent in self.possible_agents}
 
         self.infos = {agent: {} for agent in self.possible_agents}
 
@@ -149,7 +131,8 @@ class AtcGymEnv(ParallelEnv):
         self.spawn_ac_with_delay()
         if self.train_mode:
             bs.sim.update()
-        self.get_agents_and_nearest_ac_intruders_states(self.get_distance_matrix_ac())
+        if len(traf.id) != 0:
+            self.get_agents_and_nearest_ac_intruders_states(self.get_distance_matrix_ac())
         return self._states
     
     def routeDistances(self):
@@ -168,11 +151,11 @@ class AtcGymEnv(ParallelEnv):
 
     def load_positions(self):
         try:
-            positions = np.load('routes/case_study_a_route.npy')
+            positions = np.load('routes/case_study_b_route.npy')
         except:
-            positions = np.array([[41.1, -95.0246, 79.5023, 41.449, -90.508], [41.4, -95.0246, 90, 41.449, -90.508], [41.7, -95.0246, 97.2483, 41.449, -90.508]])
-            np.save("routes/case_study_a_route.npy", positions)
-            positions = np.load('routes/case_study_a_route.npy')
+            positions = np.array([[41.1, -95.0246, 79.5023, 41.449, -90.508], [41.7, -95.0246, 97.2483, 41.449, -90.508]])
+            np.save("routes/case_study_b_route.npy", positions)
+            positions = np.load('routes/case_study_b_route.npy')
         return positions
 
     def spawn_ac_with_delay(self):
@@ -210,7 +193,8 @@ class AtcGymEnv(ParallelEnv):
 
     def delete_if_terminated(self):
         for i in range(self.max_ac):
-            terminal, terminal_type = self.check_that_ac_should_terminated(i)
+            agent_idx = str(i)
+            terminal, terminal_type, nearest_ac_idx = self.check_that_ac_should_terminated(i)
             if(terminal):
                 if terminal_type == 1:
                         self.collision_counter += 1
@@ -223,6 +207,7 @@ class AtcGymEnv(ParallelEnv):
                     self.active_ac -= 1
                     self.terminations[str(i)] = True
                 break
+        return terminal, terminal_type, agent_idx, nearest_ac_idx
 
     def check_that_ac_should_terminated(self, _idx):
             # If the ac is terminal
@@ -233,10 +218,10 @@ class AtcGymEnv(ParallelEnv):
             # 2 = goal reached
             terminal_type = 0
 
-            distance, v_separation, _ = self.nearest_ac(self.get_distance_matrix_ac(), _idx)
+            distance, v_separation, nearest_ac_idx = self.nearest_ac(self.get_distance_matrix_ac(), _idx)
             goal_d = self.dist_goal(_idx)
 
-            if distance <= 1 and v_separation < 2000:
+            if distance <= 1 and v_separation < 1500:
                 terminal = True
                 terminal_type = 1
             elif goal_d < 5 and terminal == False:
@@ -246,7 +231,7 @@ class AtcGymEnv(ParallelEnv):
                 terminal = True
                 terminal_type = 2
 
-            return terminal, terminal_type
+            return terminal, terminal_type, nearest_ac_idx
 
     #Nautical Miles
     def get_distance_matrix_ac(self):
@@ -259,7 +244,6 @@ class AtcGymEnv(ParallelEnv):
         row = dist_matrix[:,_idx]
         close = 10e+25
         alt_separations = 0
-        nearest_ac_idx = _idx
         
         for i, dist in enumerate(row):
             if i != _idx and dist < close:
