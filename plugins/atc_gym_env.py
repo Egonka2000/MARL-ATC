@@ -1,4 +1,4 @@
-from gymnasium.spaces import Discrete, Box, Dict
+from gymnasium.spaces import Discrete, Box, Dict, Tuple
 import numpy as np
 from bluesky import stack, traf
 from bluesky.tools.aero import ft
@@ -13,10 +13,9 @@ class AtcGymEnv(ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "rps_v2"}
     def __init__(self, train_mode):
         self.train_mode = train_mode
-        self.train_started = False
         self.positions = self.load_positions()
         self.routeDistances()
-        self.max_ac = 2
+        self.max_ac = 3
         self.times = [20, 25, 30]
         self.spawn_queue = random.choices(self.times, k=self.positions.shape[0])
         self.active_ac = 0
@@ -25,7 +24,7 @@ class AtcGymEnv(ParallelEnv):
         self.update_timer = 0
         self.success_counter = 0
         self.collision_counter = 0
-        self.intruders = 2
+        self.intruders = 1
         self.possible_alts = [25000, 28000, 31000]
         self.done = False
         self.possible_agents = ["{}".format(r) for r in range(self.max_ac)]
@@ -33,31 +32,34 @@ class AtcGymEnv(ParallelEnv):
             zip(self.possible_agents, list(range(len(self.possible_agents))))
         )
         self.rewards = {agent: 0 for agent in self.possible_agents}
-        self.agents_prev_alt = {agent: 0 for agent in self.possible_agents}
-        self.prev_v_separation = {agent: 0 for agent in self.possible_agents}
+        self.agents_prev_action = {agent: 1 for agent in self.possible_agents}
 
         self.action_spaces = {agent: Discrete(3) for agent in self.possible_agents}
 
-        low  = np.array([0, -13000, 0, -10, 0], dtype=np.float32) 
-        high = np.array([self.max_d, 36300, 360,  10, self.max_d], dtype=np.float32)
+        low  = np.array([0, -6000, -360, -10], dtype=np.float32) 
+        high = np.array([self.max_d, 6000, 360,  10], dtype=np.float32)
 
         self.observation_spaces = Dict({
             agent: Dict({
-                'agent': Box(low, high, dtype=np.float32),
-                'intruder-1': Box(low, high, dtype=np.float32),
+                'intruder-traf': Box(low, high, dtype=np.float32), 
+                'intruder-act':  Discrete(3)
             }) for agent in self.possible_agents
         })
 
-        #distance_to_goal, actual FL, previous FL, route ID, distance_to_agent
-        self._states = {
-            agent: {
-                'agent':  np.array([self.max_d, 28000, 180, 0, 0 ], dtype=np.float32),
-                'intruder-1':  np.array([self.max_d, 28000, 180, 0, self.max_d], dtype=np.float32),
-        } for agent in self.possible_agents
-        }
+        self.reset_states()
         
         stack.stack('OP')
         stack.stack('FF')
+
+    def reset_states(self):
+        #distance, v_separation, hdg_diff, vspeed, previous action
+        self._states = {
+            agent: {
+                'intruder-traf': np.array([self.max_d, 0, 180, 0], dtype=np.float32),
+                'intruder-act': 0                   
+            } for agent in self.possible_agents
+        }
+
     
     def observation_space(self, agent):
         return self.observation_spaces[agent]
@@ -66,50 +68,51 @@ class AtcGymEnv(ParallelEnv):
         return self.action_spaces[agent]
 
     def step(self, action_dict):
-        terminal, terminal_type, agent_idx, nearest_idx = self.delete_if_terminated()
+        terminal, terminal_type, agent_term, nearest_agent_term = self.delete_if_terminated()
         self.truncations = self.terminations
         self.done = (len(traf.id) == 0 or any(self.terminations.values()))
         if not self.done:
-            for _idx, action in action_dict.items():
-                idx = int(_idx)
-                agent_acid = traf.id[idx]
-                agent_alt = int(traf.alt[idx] / ft)
-                stack.stack('ALT {}, {}'.format(agent_acid, self.possible_alts[action]))
-                distance, v_separation, nearest_ac_idx = self.nearest_ac(self.get_distance_matrix_ac(), idx)
-                nearest_ac_alt = int(traf.alt[int(nearest_ac_idx)] / ft)
+            for agent, action in action_dict.items():
+                ac_idx = int(agent)                        
+                distance, v_separation, hdg_diff, nearest_agent = self.nearest_ac(self.get_distance_matrix_ac(), ac_idx)
+                nearest_ac_vs  = traf.vs[int(nearest_agent)]
 
-                if v_separation >= 2000:
-                    if int(agent_alt) == int(self.agents_prev_alt[_idx]):
-                        self.rewards[_idx] = 10
+                if distance > 10:
+                    self.rewards[agent] = 0
+                elif abs(v_separation) > 2000:
+                    if action == self.agents_prev_action[agent]:
+                        self.rewards[agent] = 5
                     else:
-                        self.rewards[_idx] = 5
-                elif agent_alt > nearest_ac_alt and agent_alt >= self.agents_prev_alt[_idx] and nearest_ac_alt <= self.agents_prev_alt[nearest_ac_idx]:
-                    self.rewards[_idx] = 0.9*(v_separation/2000)
-                elif agent_alt < nearest_ac_alt and agent_alt <= self.agents_prev_alt[_idx] and nearest_ac_alt >= self.agents_prev_alt[nearest_ac_idx]:
-                    self.rewards[_idx] = 0.9*(v_separation/2000)
+                        self.rewards[agent] = 0
+                elif (action == action_dict[nearest_agent]):
+                    self.rewards[agent] = -1                     
+                elif v_separation > 0 and action > action_dict[nearest_agent]:
+                    self.rewards[agent] = 0.9*(v_separation/2000)
+                elif v_separation < 0 and action < action_dict[nearest_agent]:
+                    self.rewards[agent] = 0.9*(v_separation/2000)
                 else:
-                    self.rewards[_idx] = -1 + 0.9*(v_separation / 2000)
-                    
+                    self.rewards[agent] = -1 + 0.9*(v_separation / 2000)    
 
-                self.agents_prev_alt[_idx] = agent_alt
-                self.prev_v_separation[_idx] = v_separation
+                self.agents_prev_action[agent] = action
 
-        if terminal:
+                self._states[agent]["intruder-traf"] = np.array([distance, v_separation, hdg_diff, nearest_ac_vs], dtype=np.float32)
+                self._states[agent]["intruder-act"]  = action_dict[nearest_agent]                 
+
+                stack.stack('ALT {}, {}'.format(traf.id[ac_idx], self.possible_alts[action]))
+
+                if self.train_mode:
+                    Timer.update_timers()
+                    bs.sim.update() 
+                
+        if terminal:            
             if terminal_type == 1:
-                self.rewards[agent_idx] = -1000
-                self.rewards[nearest_idx] = -1000
+                self.rewards[agent_term] = -1000
+                self.rewards[nearest_agent_term] = -1000                
             if terminal_type == 2:
                 self.rewards = {agent: 1000 for agent in self.possible_agents}
 
         self.infos = {agent: {} for agent in self.possible_agents}
-
-        if self.train_mode:    
-            Timer.update_timers()
-            bs.sim.update()
-
-        if not self.done:
-            self.get_agents_and_nearest_ac_intruders_states(self.get_distance_matrix_ac())
-            
+                       
         return self._states, self.rewards, self.terminations, self.truncations, self.infos
     
     def reset(self, seed=None, options=None):
@@ -120,19 +123,20 @@ class AtcGymEnv(ParallelEnv):
         self.spawn_queue = random.choices(self.times, k=self.positions.shape[0])
         self.done = False
         self.agents = self.possible_agents[:]
-        self.prev_v_separation = {agent: 0 for agent in self.agents}
+        self.agents_prev_action = {agent: 0 for agent in self.possible_agents}
         self.rewards = {agent: 0 for agent in self.agents}
         self.terminations = {agent: False for agent in self.agents}
         self.truncations = {agent: False for agent in self.agents}
         self.infos = {agent: {} for agent in self.agents}
-        self.success_counter = 0
-        self.collision_counter = 0
-
+        
         self.spawn_ac_with_delay()
-        if self.train_mode:
-            bs.sim.update()
+        
         if len(traf.id) != 0:
-            self.get_agents_and_nearest_ac_intruders_states(self.get_distance_matrix_ac())
+            self.reset_states()
+
+        if self.train_mode:
+            bs.sim.update()    
+
         return self._states
     
     def routeDistances(self):
@@ -143,15 +147,11 @@ class AtcGymEnv(ParallelEnv):
             _, distance = geo.qdrdist(olat, olon, glat, glon)
             self.route_distances.append(distance)
         
-        self.max_d = max(self.route_distances) 
-
-    def distance_intruder(self, agent_idx, intruder_idx):
-        _, dist = geo.qdrdist(traf.lat[agent_idx], traf.lon[agent_idx], traf.lat[intruder_idx], traf.lon[intruder_idx])
-        return dist
+        self.max_d = max(self.route_distances)
 
     def load_positions(self):
         try:
-            positions = np.load('routes/case_study_b_route.npy')
+            positions = np.load('routes/case_study_a_route.npy')
         except:
             positions = np.array([[41.1, -95.0246, 79.5023, 41.449, -90.508], [41.7, -95.0246, 97.2483, 41.449, -90.508]])
             np.save("routes/case_study_b_route.npy", positions)
@@ -184,8 +184,7 @@ class AtcGymEnv(ParallelEnv):
         lat, lon, hdg, glat, glon = ac_details
         speed = 251#np.random.randint(251, 340)
         alt = np.random.randint(26000, 28000)
-        self.agents_prev_alt[str(_idx)] = int(alt)
-
+        
         stack.stack('CRE SWAN{}, A320, {}, {}, {}, {}, {}'.format(_idx, lat, lon, hdg, alt, speed))
         stack.stack('SWAN{} ADDWPT {}'.format(_idx, "PEA"))
         stack.stack('SWAN{} AFTER {} ADDWPT {}'.format(_idx, "PEA", "KMLI"))
@@ -193,21 +192,28 @@ class AtcGymEnv(ParallelEnv):
 
     def delete_if_terminated(self):
         for i in range(self.max_ac):
-            agent_idx = str(i)
-            terminal, terminal_type, nearest_ac_idx = self.check_that_ac_should_terminated(i)
+            agent_term = str(i)
+
+            terminal, terminal_type, nearest_agent_term = self.check_that_ac_should_terminated(i)
+            
             if(terminal):
                 if terminal_type == 1:
-                        self.collision_counter += 1
-                        print("Total Coll: {}".format(self.collision_counter))
+                    self.collision_counter += 1                    
                 else:
                     self.success_counter += 1
-                    print("Total Success: {}".format(self.success_counter))
+
+                print("Total Success: {} Total Coll: {}".format(self.success_counter, self.collision_counter))
+
                 for i in range(len(traf.id)):                
                     stack.stack('DEL {}'.format(traf.id[i]))
                     self.active_ac -= 1
                     self.terminations[str(i)] = True
+                
+                if self.train_mode:
+                    Timer.update_timers()
+                    bs.sim.update() 
                 break
-        return terminal, terminal_type, agent_idx, nearest_ac_idx
+        return terminal, terminal_type, agent_term, nearest_agent_term
 
     def check_that_ac_should_terminated(self, _idx):
             # If the ac is terminal
@@ -218,10 +224,10 @@ class AtcGymEnv(ParallelEnv):
             # 2 = goal reached
             terminal_type = 0
 
-            distance, v_separation, nearest_ac_idx = self.nearest_ac(self.get_distance_matrix_ac(), _idx)
+            distance, v_separation, _, nearest_agent = self.nearest_ac(self.get_distance_matrix_ac(), _idx)
             goal_d = self.dist_goal(_idx)
 
-            if distance <= 1 and v_separation < 1500:
+            if distance <= 1 and abs(v_separation) < 1500:
                 terminal = True
                 terminal_type = 1
             elif goal_d < 5 and terminal == False:
@@ -231,7 +237,7 @@ class AtcGymEnv(ParallelEnv):
                 terminal = True
                 terminal_type = 2
 
-            return terminal, terminal_type, nearest_ac_idx
+            return terminal, terminal_type, nearest_agent
 
     #Nautical Miles
     def get_distance_matrix_ac(self):
@@ -242,54 +248,25 @@ class AtcGymEnv(ParallelEnv):
     #Nautical Miles
     def nearest_ac(self, dist_matrix, _idx):
         row = dist_matrix[:,_idx]
-        close = 10e+25
-        alt_separations = 0
+        nearest_dist = 10e+25
+        v_separation = 0
         
         for i, dist in enumerate(row):
-            if i != _idx and dist < close:
-                close = dist
-                this_alt = traf.alt[_idx]
-                close_alt = traf.alt[i]
-                nearest_ac_idx = str(i)
-                alt_separations = abs(this_alt - close_alt) / ft
+            if i != _idx and dist < nearest_dist:
+                nearest_dist  = dist
+                
+                this_alt      = traf.alt[_idx]
+                nearest_alt   = traf.alt[i]
 
-        return close, alt_separations, nearest_ac_idx
+                this_hdg      = traf.hdg[_idx]
+                nearest_hdg   = traf.hdg[i]
 
-    def get_agents_and_nearest_ac_intruders_states(self, dist_matrix):
-        for _idx in range(self.max_ac):
-            row = dist_matrix[:,_idx]
-            sorted_idx = np.array(np.argsort(row, axis=0))
-            intruder_count = 0
-            for i, idx in enumerate(sorted_idx):
-                if idx == _idx:
-                    self._states["{}".format(_idx)]["agent"] = self._get_state(idx[0], _idx)
-                else:
-                    self._states["{}".format(_idx)]["intruder-{}".format(i)] = self._get_state(idx[0], _idx)
-                    intruder_count += 1
-                    if intruder_count == self.intruders:
-                        break
-    
-    def _get_state(self, _idx, idx):
-        if(idx == _idx):
-            return np.array(
-                [
-                    self.dist_goal(idx),
-                    int(traf.alt[idx] / ft),
-                    traf.hdg[idx],
-                    traf.vs[idx],
-                    0
-                ], dtype=np.float32
-            )
-        else:
-            return np.array(
-                [
-                    self.dist_goal(_idx),
-                    int(traf.alt[_idx] / ft),
-                    traf.hdg[_idx],
-                    traf.vs[_idx],
-                    self.distance_intruder(_idx, idx)
-                ], dtype=np.float32
-            )
+                nearest_agent = str(i)
+
+                v_separation  = (this_alt - nearest_alt) / ft
+                hdg_diff      = this_hdg - nearest_hdg 
+
+        return float(nearest_dist), v_separation, hdg_diff, nearest_agent
 
     #Nautical Miles
     def dist_goal(self, _idx):
