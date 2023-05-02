@@ -1,13 +1,10 @@
 from stable_baselines3 import PPO, A2C
 from plugins.atc_gym_env import AtcGymEnv
-from plugins.atc_gym_callback import AtcCallback
+from stable_baselines3.common.callbacks import CheckpointCallback
 import bluesky as bs
 import os
 import supersuit as ss
 from stable_baselines3.common.vec_env.vec_monitor import VecMonitor
-from bluesky import traf
-from gymnasium.wrappers.flatten_observation import FlattenObservation
-from supersuit.vector.markov_vector_wrapper import MarkovVectorEnv
 
 class Agent():
     def __init__(self, train_mode, agents):
@@ -37,14 +34,15 @@ class Agent():
             if self.train_mode:
                 raise Exception("Could not load model, so build the model for training...")
             else:
-                self.model = A2C.load("{}/A2C_6400000.zip".format(self.models_dir), env=self.env)
+                self.model = PPO.load("{}/PPO_16_400000".format(self.models_dir), env=self.env)
                 print("Successfully loaded model")
         except:
-            self.model = A2C(
+            self.model = PPO(
                 "MultiInputPolicy",
                 env=self.env,
                 verbose=0,
-                n_steps=256,
+                #n_steps=256,
+                ent_coef=0.001,
                 tensorboard_log=self.logdir,
                 )
 
@@ -55,7 +53,12 @@ class Agent():
                 self.done = False
                 return
             action, _states = self.model.predict(self.obs)
-            self.obs, reward, term, info = self.env.step(action)
+            self.obs, rewards, term, info = self.env.step(action)
+            for rew in rewards:
+                self.total_reward += rew
+            if any(term):
+                print("Episode total reward: {}".format(self.total_reward))
+                self.total_reward = 0
         else:
             if not self.train_started:
                 self.train()
@@ -63,9 +66,9 @@ class Agent():
     def train(self):
         print("Train!!!")
         self.train_started = True
-        TIMESTEPS = 1000000
+        TIMESTEPS = 200000
         for i in range(1,20):
-            self.model.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False, tb_log_name="A2C_14")
-            self.model.save("{}/A2C_14_{}".format(self.models_dir, TIMESTEPS*i))
+            self.model.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False, tb_log_name="PPO_16")
+            self.model.save("{}/PPO_16_{}".format(self.models_dir, TIMESTEPS*i))
         print("Done")
         bs.sim.quit()
