@@ -47,3 +47,9 @@ containing the same commands with a time stamp before the command ("HH:MM:SS.hh>
 ## Contributions
 BlueSky can be considered 'perpetual beta'. We would like to encourage anyone with a strong interest in
 ATM and/or Python to join us. Please feel free to comment, criticise, and contribute to this project. Please send suggestions, proposed changes or contributions through GitHub pull requests, preferably after debugging it and optimising it for run-time performance.
+
+## Requirements
+pip install gymnasium==0.28.1
+pip install supersuit==3.7.2
+pip install pettingzoo==1.22.4
+pip install stable-baselines3==2.0.0a5
